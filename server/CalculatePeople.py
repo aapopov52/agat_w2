@@ -20,7 +20,8 @@ port_ = '5432'
 TOKEN = '7067388213:AAEWGOHb1uOzmlOzczYbKYx8_D5IG57W6rs'
 bot = telebot.TeleBot(TOKEN)
 
-model_yolo = YOLO('yolov8x.pt')
+#model_yolo = YOLO('yolov8x.pt')
+model_yolo = YOLO('yolov8x-seg.pt')  # Модель сегментации
 
 
 class Konstant_class:
@@ -67,11 +68,6 @@ def find_people(kamera):
         kamera.cnt_people = -1
         return
 
-    #net = cv2.dnn.readNet("yolov3.weights", "darknet/cfg/yolov3.cfg")
-    
-    #layer_names = net.getLayerNames()
-    #output_layers = [layer_names[i - 1] for i in net.getUnconnectedOutLayers()]
-
     # Загрузка изображения
     image = cv2.imread(kamera.folder_name + '/' + kamera.file_name)
     
@@ -90,44 +86,65 @@ def find_people(kamera):
     class_ids = [] # класс объекта
     confidences = []
     boxes = [] # область где нарисован объект
+    masks = []
     for r in results:
-        for box in r.boxes:
+        for box_num, box in enumerate(r.boxes):
             class_id = int(box.cls[0])  # Класс (0 - человек, 2 - авто)
             confidence = float(box.conf[0])  # Уверенность
             if class_id == kamera.id_class_yolo_coco and confidence > 0.2:  # Если обнаружен человек (вероятность выше 0,2)
                 x1, y1, x2, y2 = map(int, box.xyxy[0])  # Верхний левый и нижний правый угол
-                #cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)  # Прямоугольник
                 boxes.append([x1, y1, x2, y2])
-                #label = f"Person {conf:.2f}"
-                #cv2.putText(image, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
                 confidences.append(float(confidence))
                 class_ids.append(class_id)
+                
+                masks.append(r.masks.data[box_num])
+                    
             
 
     # Отрисовка рамки вокруг людей на изображении
-    indexes = cv2.dnn.NMSBoxes(boxes, confidences, 0.5, 0.4)
+    #indexes = cv2.dnn.NMSBoxes(boxes, confidences, 0.5, 0.4)
     font = cv2.FONT_HERSHEY_PLAIN
     for i in range(len(boxes)):
-        if i in indexes:
-            x1, y1, x2, y2 = boxes[i]
-            cv2.rectangle(image, (x1, y1), (x2, y2), (255, 0, 0), 2)
-            slabel = 'class - ' + str(kamera.id_class_yolo_coco)
-            if kamera.id_class_yolo_coco == 0: slabel = 'person'
-            if kamera.id_class_yolo_coco == 2: 
-                slabel = 'car'
-                cx1 = x1 + (x2 - x1) // 4
-                color_car_rgb = get_color_car(image[y1:y2, x1:x2], kamera) # функция для определения цвета авто
-                cv2.rectangle(image, (x2, y1), (x2 + 20, y1 + 20), color_car_rgb[::-1], -1)
-                rgb_text = f" RGB({color_car_rgb[0]}, {color_car_rgb[1]}, {color_car_rgb[2]})"
-                
+        #if i in indexes:
+        x1, y1, x2, y2 = boxes[i]
+        cv2.rectangle(image, (x1, y1), (x2, y2), (255, 0, 0), 2)
+        slabel = 'class - ' + str(kamera.id_class_yolo_coco)
+        if kamera.id_class_yolo_coco == 0: slabel = 'person'
+        if kamera.id_class_yolo_coco == 2: 
+            slabel = 'car'
+            
+            
+            mask_np = masks[i].cpu().numpy().astype('uint8')
+            # Находим контуры
+            contours, _ = cv2.findContours(mask_np, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            # Рисуем контуры на изображении
+            for contour in contours:
+                cv2.drawContours(image, [contour], -1, (0, 0, 255), 2)  # Красные контуры
+            binary_mask = np.zeros(mask_np.shape, dtype=np.uint8)
+            # Рисуем полигон, заполняя его белым цветом на бинарной маске
+            cv2.drawContours(binary_mask, contours, -1, 255, thickness=cv2.FILLED)
+            
+            # Находим координаты всех ненулевых точек (т.е., внутри контура)
+            points = np.column_stack(np.where(binary_mask > 0))  # Строки и столбцы ненулевых пикселей
+            image_object = np.zeros_like(image)
+            # Распаковываем координаты points (строки и столбцы)
+            rows, cols = points[:, 0], points[:, 1]
+            # Заполняем только нужные точки из исходного изображения
+            image_object[rows, cols] = image[rows, cols]
+            
+            color_car_rgb = get_color_car(image_object[y1:y2, x1:x2], kamera) # функция для определения цвета авто
+            cv2.rectangle(image, (x2, y1), (x2 + 20, y1 + 20), color_car_rgb[::-1], -1)
+            rgb_text = f" RGB({color_car_rgb[0]}, {color_car_rgb[1]}, {color_car_rgb[2]})"
+            
+            
 
-            slabel = slabel + str(round(confidences[i], 2))
-                
-            if kamera.id_class_yolo_coco == 2:
-                slabel =  slabel + rgb_text
-            cv2.putText(image, slabel, (x1, y1), font, 1, (255, 0, 0), 2)
+        slabel = slabel + str(round(confidences[i], 2))
+            
+        if kamera.id_class_yolo_coco == 2:
+            slabel =  slabel + rgb_text
+        cv2.putText(image, slabel, (x1, y1), font, 1, (255, 0, 0), 2)
 
-    kamera.cnt_people = len(indexes)
+    kamera.cnt_people = len(boxes)
 
     # Сохраняем изображение
     file_name_new = kamera.file_name[:-4] + '__' + str(kamera.cnt_people)
@@ -146,19 +163,12 @@ def find_people(kamera):
 
 # находим цвет авто
 def get_color_car(image, kamera):
-    height, width = image.shape[:2]
-    cx1 = width // 4
-    cy1 = height // 4
-    cx2 = width // 4 * 3
-    cy2 = height // 4 * 3
-    
-    cropped_region = image[cy1:cy2, cx1:cx2]
     
     # Преобразуем изображение в цветовую модель LAB
-    filtered_lab = cv2.cvtColor(cropped_region, cv2.COLOR_BGR2LAB)
+    filtered_lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
     # сглаживаем изображение
     filtered_lab = cv2.medianBlur(filtered_lab, 5)  # Применяем медианный фильтр
-
+    
     # Преобразуем пиксели в одномерный массив для кластеризации
     pixels = filtered_lab.reshape((-1, 3))  # Преобразуем в BGR формат
     pixels = np.float32(pixels)
@@ -173,7 +183,6 @@ def get_color_car(image, kamera):
     
     # Средний цвет доминирующего кластера (LAB)
     dominant_color = kmeans.cluster_centers_[dominant_cluster]
-    
     
     # Преобразование из Lab в BGR
     dominant_color_bgr = cv2.cvtColor(
