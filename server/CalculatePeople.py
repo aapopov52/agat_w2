@@ -96,30 +96,44 @@ def find_people(kamera):
                 boxes.append([x1, y1, x2, y2])
                 confidences.append(float(confidence))
                 class_ids.append(class_id)
-                
-                masks.append(r.masks.data[box_num])
-                    
-            
+                # т.к. Йоол перед обработкой изменяет размер избражения, координаты в масках отличаются от исходных
+                # Получаем текущую маску в формате тензора
+                mask_tensor = r.masks.data[box_num]  # Текущая маска как PyTorch Tensor
+        
+                # Конвертируем тензор в NumPy
+                mask_np = mask_tensor.cpu().numpy().astype('uint8')  # Преобразуем в NumPy массив (uint8)
 
+                # Меняем размер маски, чтобы он соответствовал исходному изображению
+                resized_mask = cv2.resize(
+                    mask_np,
+                    (image.shape[1], image.shape[0]),  # размеры: (width, height)
+                    interpolation=cv2.INTER_NEAREST  # Используем ближайший сосед для корректной маски
+                    )
+        
+                # Сохраняем изменённую маску
+                masks.append(resized_mask)
+    
+    
     # Отрисовка рамки вокруг людей на изображении
+    image_result = image.copy() # отдельный объект для отрисовки
     #indexes = cv2.dnn.NMSBoxes(boxes, confidences, 0.5, 0.4)
     font = cv2.FONT_HERSHEY_PLAIN
     for i in range(len(boxes)):
         #if i in indexes:
         x1, y1, x2, y2 = boxes[i]
-        cv2.rectangle(image, (x1, y1), (x2, y2), (255, 0, 0), 2)
+        cv2.rectangle(image_result, (x1, y1), (x2, y2), (255, 0, 0), 2)
         slabel = 'class - ' + str(kamera.id_class_yolo_coco)
         if kamera.id_class_yolo_coco == 0: slabel = 'person'
         if kamera.id_class_yolo_coco == 2: 
             slabel = 'car'
             
             
-            mask_np = masks[i].cpu().numpy().astype('uint8')
+            mask_np = masks[i]
             # Находим контуры
             contours, _ = cv2.findContours(mask_np, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             # Рисуем контуры на изображении
             for contour in contours:
-                cv2.drawContours(image, [contour], -1, (0, 0, 255), 2)  # Красные контуры
+                cv2.drawContours(image_result, [contour], -1, (0, 0, 255), 2)  # Красные контуры
             binary_mask = np.zeros(mask_np.shape, dtype=np.uint8)
             # Рисуем полигон, заполняя его белым цветом на бинарной маске
             cv2.drawContours(binary_mask, contours, -1, 255, thickness=cv2.FILLED)
@@ -127,14 +141,29 @@ def find_people(kamera):
             # Находим координаты всех ненулевых точек (т.е., внутри контура)
             points = np.column_stack(np.where(binary_mask > 0))  # Строки и столбцы ненулевых пикселей
             image_object = np.zeros_like(image)
-            # Распаковываем координаты points (строки и столбцы)
+            # Распаковываем координаты points (строки и столбца)
             rows, cols = points[:, 0], points[:, 1]
             # Заполняем только нужные точки из исходного изображения
+            #print ('image_object.shape=', image_object.shape, ', image.shape=', image.shape, ', rows.max=', rows.max(), ', cols.max=', cols.max(), ', mask_np.shape=', mask_np.shape)
             image_object[rows, cols] = image[rows, cols]
             
-            color_car_rgb = get_color_car(image_object[y1:y2, x1:x2], kamera) # функция для определения цвета авто
-            cv2.rectangle(image, (x2, y1), (x2 + 20, y1 + 20), color_car_rgb[::-1], -1)
-            rgb_text = f" RGB({color_car_rgb[0]}, {color_car_rgb[1]}, {color_car_rgb[2]})"
+            #cv2.imwrite('tmp/' + kamera.file_name[:-4] + '_' + datetime.now().strftime('%Y-%m-%d__%H_%M_%S') + '_' + str(i) + '.jpg', image_object[y1:y2, x1:x2])
+                
+            pixels_cnt, color_car_rgb, cnt, color_car_rgb_1, cnt_1, color_car_rgb_2, cnt_2 = get_color_car(image_object, kamera, rows, cols) # функция для определения цвета авто
+            #image_object[y1:y2, x1:x2]
+            
+            cv2.rectangle(image_result, (x2, y1), (x2 + 20, y1 + 20), color_car_rgb[::-1], -1)
+            cv2.rectangle(image_result, (x2, y1 + 20), (x2 + 20, y1 + 40), color_car_rgb_1[::-1], -1)
+            cv2.rectangle(image_result, (x2, y1 + 40), (x2 + 20, y1 + 60), color_car_rgb_1[::-1], -1)
+            
+            s1 = f" {cnt} ({cnt / pixels_cnt * 100:.0f}%) RGB({color_car_rgb[0]}, {color_car_rgb[1]}, {color_car_rgb[2]})"
+            cv2.putText(image_result, s1, (x2 + 25, y1 + 20), font, 1, (255, 0, 0), 2)
+            s1 = f" {cnt_1} ({cnt_1 / pixels_cnt * 100:.0f}%) RGB({color_car_rgb_1[0]}, {color_car_rgb_1[1]}, {color_car_rgb_1[2]})"
+            cv2.putText(image_result, s1, (x2 + 25, y1 + 40), font, 1, (255, 0, 0), 2)
+            s1 = f" {cnt_2} ({cnt_2 / pixels_cnt * 100:.0f}%) RGB({color_car_rgb_2[0]}, {color_car_rgb_2[1]}, {color_car_rgb_2[2]})"
+            cv2.putText(image_result, s1, (x2 + 25, y1 + 60), font, 1, (255, 0, 0), 2)
+            
+            rgb_text = f" {pixels_cnt} RGB({color_car_rgb[0]}, {color_car_rgb[1]}, {color_car_rgb[2]})"
             
             
 
@@ -142,7 +171,7 @@ def find_people(kamera):
             
         if kamera.id_class_yolo_coco == 2:
             slabel =  slabel + rgb_text
-        cv2.putText(image, slabel, (x1, y1), font, 1, (255, 0, 0), 2)
+        cv2.putText(image_result, slabel, (x1, y1), font, 1, (255, 0, 0), 2)
 
     kamera.cnt_people = len(boxes)
 
@@ -156,43 +185,64 @@ def find_people(kamera):
         prefix = '_' + str(i)
 
     kamera.file_name_obr = file_name_new + prefix + '.jpg'
-    cv2.imwrite(kamera.folder_name + '/' + kamera.file_name_obr, image)
+    cv2.imwrite(kamera.folder_name + '/' + kamera.file_name_obr, image_result)
 
     kamera.file_name_obr = kamera.file_name_obr
 
 
 # находим цвет авто
-def get_color_car(image, kamera):
+def get_color_car(image, kamera, rows, cols):
+    
     
     # Преобразуем изображение в цветовую модель LAB
     filtered_lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
     # сглаживаем изображение
     filtered_lab = cv2.medianBlur(filtered_lab, 5)  # Применяем медианный фильтр
+    # оставляем точки, входящие в rows, cols
     
     # Преобразуем пиксели в одномерный массив для кластеризации
-    pixels = filtered_lab.reshape((-1, 3))  # Преобразуем в BGR формат
+    #pixels = filtered_lab.reshape((-1, 3))
+    pixels = filtered_lab[rows, cols]
     pixels = np.float32(pixels)
     # цвет должен быть "осовным", поэтому боьшоре количество кластеров будет избыточным
     # попробуем 5
-    kmeans = KMeans(n_clusters=5, random_state=42)
+    kmeans = KMeans(n_clusters=4, random_state=42)
     kmeans.fit(pixels)
     
-    # Найдём самый большой кластер
+    # Вычислим количество точек в каждом кластере
     labels, counts = np.unique(kmeans.labels_, return_counts=True)
-    dominant_cluster = labels[np.argmax(counts)]
+    sorted_indices = np.argsort(-counts)  # Индексы кластеров, отсортированные по убыванию
+    pixels_cnt = counts.sum()
     
-    # Средний цвет доминирующего кластера (LAB)
+    dominant_cluster = sorted_indices[0]  # Индекс крупнейшего кластера
+    dominant_cluster_cnt = counts[dominant_cluster]
     dominant_color = kmeans.cluster_centers_[dominant_cluster]
+    dominant_color_bgr = cv2.cvtColor(np.uint8([[dominant_color]]), cv2.COLOR_LAB2BGR)[0][0]
+    dominant_color_rgb = cv2.cvtColor(np.uint8([[dominant_color_bgr]]), cv2.COLOR_BGR2RGB)[0][0]
     
-    # Преобразование из Lab в BGR
-    dominant_color_bgr = cv2.cvtColor(
-        np.uint8([[dominant_color]]), cv2.COLOR_LAB2BGR)[0][0]
+    dominant_cluster_1_cnt = 0
+    dominant_color_rgb_1 = np.array([0, 0, 0]) 
     
-    # Преобразование из BGR в RGB
-    dominant_color_rgb = cv2.cvtColor(
-        np.uint8([[dominant_color_bgr]]), cv2.COLOR_BGR2RGB)[0][0]
+    dominant_cluster_2_cnt = 0
+    dominant_color_rgb_2 = np.array([0, 0, 0]) 
+    
+    if len(sorted_indices) >= 2:
+        dominant_cluster_1 = sorted_indices[1]  # Индекс второго по величине кластера
+        dominant_cluster_1_cnt = counts[dominant_cluster_1]
+        dominant_color_1 = kmeans.cluster_centers_[dominant_cluster_1]
+        dominant_color_bgr_1 = cv2.cvtColor(np.uint8([[dominant_color_1]]), cv2.COLOR_LAB2BGR)[0][0]
+        dominant_color_rgb_1 = cv2.cvtColor(np.uint8([[dominant_color_bgr_1]]), cv2.COLOR_BGR2RGB)[0][0]
+    
+    if len(sorted_indices) >= 3:
+        dominant_cluster_2 = sorted_indices[2]  # Индекс второго по величине кластера
+        dominant_cluster_2_cnt = counts[dominant_cluster_2]
+        dominant_color_2 = kmeans.cluster_centers_[dominant_cluster_2]
+        dominant_color_bgr_2 = cv2.cvtColor(np.uint8([[dominant_color_2]]), cv2.COLOR_LAB2BGR)[0][0]
+        dominant_color_rgb_2 = cv2.cvtColor(np.uint8([[dominant_color_bgr_2]]), cv2.COLOR_BGR2RGB)[0][0]
+        
+    
     # Возвращаем цвет кластера
-    return tuple(map(int, dominant_color_rgb))
+    return pixels_cnt, tuple(map(int, dominant_color_rgb)), dominant_cluster_cnt, tuple(map(int, dominant_color_rgb_1)), dominant_cluster_1_cnt, tuple(map(int, dominant_color_rgb_2)), dominant_cluster_2_cnt
 
     
 # проверка является ли значение числом
