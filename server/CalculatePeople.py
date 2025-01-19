@@ -1,4 +1,5 @@
 import os
+import asyncio
 from ultralytics import YOLO
 import cv2
 import telebot
@@ -63,7 +64,7 @@ class Kamera_class:
     id_class_yolo_coco = 0        # класс в йоло, который выявлят будем
 
 # функция по выделению людей на картинке
-def find_people(kamera):
+async def find_people(kamera):
     if kamera.file_name == 'error':
         kamera.cnt_people = -1
         return
@@ -78,9 +79,8 @@ def find_people(kamera):
     #                             True, crop=False)
     #net.setInput(blob)
     #outs = net.forward(output_layers)
-
-    results = model_yolo(source=image,  
-                        imgsz=max(image.shape[:2]))  # максимальный из размеров входного изображения (оригинальный размер)
+    results = await asyncio.to_thread(model_yolo, source=image,  
+                        imgsz=max(image.shape[:2])   )  # максимальный из размеров входного изображения (оригинальный размер)
     
     # Обнаружение объектов на изображении
     class_ids = [] # класс объекта
@@ -127,7 +127,6 @@ def find_people(kamera):
         if kamera.id_class_yolo_coco == 2: 
             slabel = 'car'
             
-            
             mask_np = masks[i]
             # Находим контуры
             contours, _ = cv2.findContours(mask_np, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -149,7 +148,7 @@ def find_people(kamera):
             
             #cv2.imwrite('tmp/' + kamera.file_name[:-4] + '_' + datetime.now().strftime('%Y-%m-%d__%H_%M_%S') + '_' + str(i) + '.jpg', image_object[y1:y2, x1:x2])
                 
-            pixels_cnt, color_car_rgb, cnt, color_car_rgb_1, cnt_1, color_car_rgb_2, cnt_2 = get_color_car(image_object, kamera, rows, cols) # функция для определения цвета авто
+            pixels_cnt, color_car_rgb, cnt, color_car_rgb_1, cnt_1, color_car_rgb_2, cnt_2 = await get_color_car(image_object, kamera, rows, cols) # функция для определения цвета авто
             #image_object[y1:y2, x1:x2]
             
             cv2.rectangle(image_result, (x2, y1), (x2 + 20, y1 + 20), color_car_rgb[::-1], -1)
@@ -188,11 +187,12 @@ def find_people(kamera):
     cv2.imwrite(kamera.folder_name + '/' + kamera.file_name_obr, image_result)
 
     kamera.file_name_obr = kamera.file_name_obr
+    
+    print('Обработан', str(kamera.id), kamera.name)
 
 
 # находим цвет авто
-def get_color_car(image, kamera, rows, cols):
-    
+async def get_color_car(image, kamera, rows, cols):
     
     # Преобразуем изображение в цветовую модель LAB
     filtered_lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
@@ -352,6 +352,7 @@ def get_spisok_kamer(conn):
                                 t_usl_less_norm_id.id_calc_people_camera = C.id
           left join calc_people_camera_cnt_people t_less_norm_last on
                                 t_less_norm_last.id = t_usl_less_norm_id.id_max
+        order by C.id
         """
 
     cur.execute(sql)
@@ -659,7 +660,7 @@ def send_message(spisok_kamer, konstants, conn):
     return konstants
 
 
-def run_proccess():
+async def run_proccess():
     # параметры соединения с базой
     conn = psycopg2.connect(
         host=host_,
@@ -670,15 +671,21 @@ def run_proccess():
         )
     # получаем константы
     konstants = get_all_konstant(conn)
-
+    
     # получаем список камер (с которых будем брать картинки)
     spisok_kamer = get_spisok_kamer(conn)
     get_pic_from_camera(spisok_kamer)
 
     # считаем кол-во людей на кадом фото и сохраняем новые картинки
+    tasks = []
     for i in range(len(spisok_kamer)):
-        find_people(spisok_kamer[i])
-
+        print("Ставим задачу", spisok_kamer[i].id, spisok_kamer[i].name)
+        tasks.append(asyncio.create_task(find_people(spisok_kamer[i])))
+        
+        #await find_people(spisok_kamer[i])
+        
+    await asyncio.gather(*tasks)
+    
     # удаляем последние файлы при превышении заданного числа
     cnt_file = get_konstant('Макс число картинок по камере', konstants, 2)
     clear_photo_folder(spisok_kamer, cnt_file)
@@ -693,13 +700,15 @@ def run_proccess():
 
     # спать - и снова в работу (чтобы не замучить камеры и базу)
     sec_sleep = get_konstant('Периодичность опроса - сек', konstants, 2)
-    time.sleep(sec_sleep)
+    #time.sleep(sec_sleep)
+    await asyncio.sleep(sec_sleep)
+
 
 
 # точка входа
-def main():
+async def main():
     while 1 == 1:
-        run_proccess()
+        await run_proccess()
 
 
-main()
+asyncio.run(main())
