@@ -153,7 +153,7 @@ async def find_people(kamera):
             
             cv2.rectangle(image_result, (x2, y1), (x2 + 20, y1 + 20), color_car_rgb[::-1], -1)
             cv2.rectangle(image_result, (x2, y1 + 20), (x2 + 20, y1 + 40), color_car_rgb_1[::-1], -1)
-            cv2.rectangle(image_result, (x2, y1 + 40), (x2 + 20, y1 + 60), color_car_rgb_1[::-1], -1)
+            cv2.rectangle(image_result, (x2, y1 + 40), (x2 + 20, y1 + 60), color_car_rgb_2[::-1], -1)
             
             s1 = f" {cnt} ({cnt / pixels_cnt * 100:.0f}%) RGB({color_car_rgb[0]}, {color_car_rgb[1]}, {color_car_rgb[2]})"
             cv2.putText(image_result, s1, (x2 + 25, y1 + 20), font, 1, (255, 0, 0), 2)
@@ -352,7 +352,6 @@ def get_spisok_kamer(conn):
                                 t_usl_less_norm_id.id_calc_people_camera = C.id
           left join calc_people_camera_cnt_people t_less_norm_last on
                                 t_less_norm_last.id = t_usl_less_norm_id.id_max
-        order by C.id
         """
 
     cur.execute(sql)
